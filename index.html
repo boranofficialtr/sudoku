@@ -12,29 +12,14 @@
  MİMARİ
  ------
  1) MOTOR (ENGINE START/END arası, DOM'a bağımlı değil)
-    - RNG            : crypto.getRandomValues tabanlı, yanlılıksız rastgele sayı üreteci
-    - solveGrid      : bit maskeli, MRV sezgisel backtracking çözücü (rastgele sıralı olabilir)
-    - countSolutions : çözüm sayısını (limit=2) sayan backtracking → TEK ÇÖZÜM kontrolü
-    - humanGrade     : insan tekniği çözücü. Teknik seviyeleri:
-                         1 = Çıplak/Gizli tek (naked/hidden single)
-                         2 = Kilitli adaylar (pointing/claiming), çıplak/gizli ikili
-                         3 = Çıplak/Gizli üçlü ve dörtlü, X-Wing, Swordfish, XY-Wing
-                         4 = Yukarıdakilerle çözülemiyor (deneme-yanılma gerekir)
-    - carve          : tam çözümden hücre silerek bulmaca üretir (Kolay, Uzman). Her silme
-                       sonrası bulmacanın TEK çözümlü ve hedef teknik seviyesinde kalması
-                       denetlenir. Rastgele silme YOK.
-    - carveByAdding  : Orta/Zor için: çözülemez minimal bulmacaya, ilk çözülebilir olana kadar
-                       ipucu eklenir (bulmaca hedef tekniğin tam sınırında kalır).
-    - transform      : satır/sütun/bant permütasyonu, transpoz, rakam yeniden adlandırma
-                       (çözüm sayısını ve tekniksel zorluğu değiştirmeyen dönüşümler)
-    - verifyPuzzle   : üretilen her bulmaca için nihai doğrulama (tek çözüm + tutarlılık)
-    - cyrb53 hash    : her bulmaca için benzersiz kimlik; localStorage'daki geçmişle
-                       karşılaştırılarak tekrar engellenir
- 2) OYUN DURUMU  : G nesnesi, localStorage'a otomatik kaydedilir (yenilemede devam)
+    - RNG, solveGrid, countSolutions, humanGrade, carve, carveByAdding,
+      transform, verifyPuzzle, cyrb53 (bkz. kod içi açıklamalar)
+ 2) OYUN DURUMU  : G nesnesi, localStorage'a otomatik kaydedilir
  3) ARAYÜZ       : 6 tahta, klavye + ekran tuş takımı, vurgulamalar, geri al
- 4) ZAMANLAYICI  : performance.now() tabanlı (monoton), sekme gizlenince durur
- 5) PDF          : Harici kütüphane YOK. Vektörel A4 PDF doğrudan üretilir (2x3 düzen)
- 6) KAYITLAR     : tamamlama ekranı, isim kaydı, liderlik tablosu (localStorage)
+ 4) ZAMANLAYICI  : performance.now() tabanlı, sekme gizlenince durur
+ 5) PDF          : Harici kütüphane YOK, vektörel A4 PDF (2x3 düzen)
+ 6) KAYITLAR     : tamamlama ekranı, isim kaydı, liderlik tablosu
+ 7) AJAN         : Elle girilen sudokuyu çözen bulmaca çözücü (solveGrid kullanır)
 =====================================================================
 -->
 <style>
@@ -90,6 +75,8 @@ select:focus-visible,.btn:focus-visible,.nbtn:focus-visible,input:focus-visible{
 .btn.primary:hover:not(:disabled){background:var(--primary-d);border-color:var(--primary-d)}
 .btn.danger{background:#c0392b;border-color:#c0392b;color:#fff}
 .btn.danger:hover:not(:disabled){background:#a93226;border-color:#a93226}
+.btn.agent{background:#fff7e6;border-color:#f0c36d;color:#7a4b00}
+.btn.agent:hover:not(:disabled){background:#ffefc9;border-color:#e3b04a}
 .check{display:flex;align-items:center;gap:6px;font-size:.88rem;color:var(--ink);cursor:pointer;user-select:none}
 .check input{width:17px;height:17px;accent-color:var(--primary)}
 .timer{
@@ -147,6 +134,15 @@ main{padding:clamp(12px,3vw,32px);max-width:1500px;margin:0 auto}
 .cell.err{background:var(--err-bg);color:var(--err)}
 .cell.sel{background:var(--sel)}
 .cell:hover:not(.sel){filter:brightness(.97)}
+
+/* Geniş ekran: 3 + 3 düzen, iki satır ekrana sığacak şekilde boyutlanır */
+@media(min-width:900px){
+  main{padding-top:14px;padding-bottom:14px}
+  .boards{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 18px;justify-items:center}
+  .board-card{max-width:clamp(250px,calc((100vh - 330px) / 2),480px);padding:9px 11px 11px}
+  .board-head{margin-bottom:6px}
+  .board-head h2{font-size:.95rem}
+}
 
 .empty{
   text-align:center;background:#fff;border:2px dashed var(--line);border-radius:var(--radius);
@@ -221,6 +217,18 @@ h3.sec{margin:16px 0 0;font-size:1rem}
 }
 .toast.show{transform:translate(-50%,0)}
 
+/* ---------- Ajan (bulmaca çözücü) ---------- */
+.modal.agent{width:min(100%,520px)}
+.agent-board{max-width:min(100%,56vh,460px);margin:12px auto 0}
+.apad{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-width:min(100%,460px);margin:10px auto 0}
+.apad .nbtn{padding:9px 0}
+.apad .nbtn.del{color:var(--ink);font-size:.86rem}
+.agmsg{min-height:1.4em;margin:10px auto 0;max-width:460px;text-align:center;font-size:.9rem;font-weight:600;color:var(--muted)}
+.agmsg.ok{color:var(--ok)}
+.agmsg.err{color:var(--err)}
+.agrun{display:block;width:100%;max-width:460px;margin:10px auto 0;padding:13px 10px;font-size:1.05rem}
+.agsub{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+
 @media(max-width:640px){
   .controls{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .controls .field{grid-column:1/-1}
@@ -255,6 +263,7 @@ h3.sec{margin:16px 0 0;font-size:1rem}
     <button class="btn" id="btnReveal" type="button">Cevapları Getir</button>
     <button class="btn" id="btnPdf" type="button">PDF Oluştur</button>
     <button class="btn" id="btnStats" type="button">İstatistikler</button>
+    <button class="btn agent" id="btnAgent" type="button">🤖 Ajan</button>
     <label class="check"><input type="checkbox" id="chkErrors"> Hata kontrolü</label>
     <div class="timer js-timer" id="timer" title="Geçen süre">00:00:00</div>
   </div>
@@ -272,6 +281,7 @@ h3.sec{margin:16px 0 0;font-size:1rem}
     <p>Bir zorluk seviyesi seçip <b>Oluştur</b> düğmesine basın. Her seferinde birbirinden farklı,
     tek çözümlü 6 Sudoku üretilir. Süre bulmacalar oluşunca başlar.</p>
     <p class="muted" style="font-size:.85rem">Rakam girmek için bir hücreye dokunun/tıklayın, ardından klavyeyi (1–9) veya alttaki tuş takımını kullanın.</p>
+    <p class="muted" style="font-size:.85rem">Elinizdeki bir Sudoku'yu çözdürmek için <b>🤖 Ajan</b> düğmesini kullanın.</p>
   </div>
   <noscript><p>Bu uygulama JavaScript gerektirir.</p></noscript>
 </main>
@@ -338,6 +348,25 @@ h3.sec{margin:16px 0 0;font-size:1rem}
       <button class="btn" id="stClear" type="button">Kayıtları temizle</button>
     </div>
     <div id="stBody"></div>
+  </div>
+</div>
+
+<!-- Ajan: bulmaca çözücü -->
+<div class="overlay" id="ovAgent" hidden>
+  <div class="modal agent" role="dialog" aria-modal="true" aria-labelledby="agTitle">
+    <div class="toolrow">
+      <h2 id="agTitle">🤖 Ajan · Sudoku Çözücü</h2>
+      <button class="btn" id="agClose" type="button">Kapat</button>
+    </div>
+    <p style="font-size:.88rem">Bilinen rakamları girin; ajan boş hücreleri sizin yerinize doldursun.</p>
+    <div class="board agent-board" id="agBoard" role="grid" aria-label="Ajan Sudoku tahtası"></div>
+    <div class="apad" id="agPad" aria-label="Rakam tuş takımı"></div>
+    <button class="btn primary agrun" id="agRun" type="button">▶ Ajanı Çalıştır</button>
+    <div class="agmsg" id="agMsg" aria-live="polite"></div>
+    <div class="agsub">
+      <button class="btn" id="agUnsolve" type="button">Çözümü sil</button>
+      <button class="btn" id="agClear" type="button">Hepsini temizle</button>
+    </div>
   </div>
 </div>
 
@@ -734,10 +763,7 @@ function humanGrade(grid, maxLevel) {
   }
 }
 
-/* ---- Zorluk seviyesi ayarları ----
-   maxLevel : silme sırasında izin verilen en zor teknik
-   minGrade : bulmacanın gerektirmesi gereken en az teknik seviyesi
-   clues    : hedef ipucu (dolu hücre) aralığı                                  */
+/* ---- Zorluk seviyesi ayarları ---- */
 const LEVELS = {
   kolay: { name: 'Kolay', maxLevel: 1, minGrade: 1, clues: [36, 41], expert: false, method: 'remove' },
   orta:  { name: 'Orta',  maxLevel: 2, minGrade: 2, clues: [22, 25], expert: false, method: 'add' },
@@ -756,8 +782,7 @@ async function maybeYield() {
   }
 }
 
-/* ---- Tam çözümden kontrollü hücre silme ----
-   Her silme: bulmaca (a) hâlâ TEK çözümlü ve (b) izin verilen tekniklerle çözülebilir olmalı. */
+/* ---- Tam çözümden kontrollü hücre silme ---- */
 async function carve(solution, cfg) {
   const grid = Array.from(solution);
   const order = RNG.shuffle(Array.from({ length: 81 }, (_, i) => i));
@@ -782,11 +807,7 @@ async function carve(solution, cfg) {
   return { grid, clues, grade };
 }
 
-/* ---- Orta / Zor için: "ipucu ekleyerek" üretim ----
-   1) Tek çözümlü, minimal bir bulmaca üretilir (genelde ileri teknik gerektirir).
-   2) İzin verilen tekniklerle (maxLevel) çözülemiyorsa, rastgele sırayla ÇÖZÜMDEN
-      ipucu geri eklenir; bulmaca ilk kez çözülebilir olduğu anda durulur.
-   Böylece bulmaca, hedef seviyedeki tekniğe "tam sınırda" kalır. Ekleme tek çözümlülüğü bozmaz. */
+/* ---- Orta / Zor için: "ipucu ekleyerek" üretim ---- */
 async function carveByAdding(solution, cfg) {
   const base = await carve(solution, { clues: cfg.clues, expert: true, minGrade: 0, maxLevel: 3 });
   const grid = base.grid;
@@ -922,7 +943,8 @@ let timerRunning = false, tickBase = 0, elapsedBase = 0;
 function currentElapsed() { return timerRunning ? elapsedBase + (performance.now() - tickBase) : elapsedBase; }
 function startTimer() { if (timerRunning) return; tickBase = performance.now(); timerRunning = true; }
 function stopTimer() { if (!timerRunning) return; elapsedBase += performance.now() - tickBase; timerRunning = false; }
-function timerShouldRun() { return !!G && !G.completed && !G.revealed && !generating && !document.hidden; }
+function agentOpen() { const o = document.getElementById('ovAgent'); return !!o && !o.hidden; }
+function timerShouldRun() { return !!G && !G.completed && !G.revealed && !generating && !document.hidden && !agentOpen(); }
 function resumeTimerIfNeeded() { if (timerShouldRun()) startTimer(); }
 function fmtTime(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -1091,6 +1113,7 @@ function updateButtons() {
   $('#btnReveal').disabled = busy || !G || G.completed;
   $('#btnReveal').textContent = (G && G.answersVisible) ? 'Cevapları Gizle' : 'Cevapları Getir';
   $('#btnPdf').disabled = busy || !G;
+  $('#btnAgent').disabled = busy;
 }
 
 /* ---- Girdi işlemleri ---- */
@@ -1214,6 +1237,7 @@ async function onGenerate() {
     $('#genBar').style.width = '100%';
     generating = false;
     newGame(diff, puzzles);
+    window.scrollTo(0, 0);
   } catch (e) {
     console.error(e);
     generating = false;
@@ -1238,6 +1262,166 @@ async function onReveal() {
   }
   G.answersVisible = true;
   persist(); refreshAll(); updateTimerDisplay();
+}
+
+/* ======================================================================
+   AJAN  –  Elle girilen Sudoku'yu çözen bulmaca çözücü
+   ====================================================================== */
+const AG = { grid: new Array(81).fill(0), auto: new Array(81).fill(false), sel: -1, busy: false, cells: [] };
+
+function agMsg(text, kind) {
+  const m = $('#agMsg');
+  m.textContent = text || '';
+  m.className = 'agmsg' + (kind ? ' ' + kind : '');
+}
+
+// Kullanıcının girdiği rakamlar arasındaki çakışmalar (aynı satır/sütun/kutuda tekrar)
+function agConflicts() {
+  const bad = new Array(81).fill(false);
+  let any = false;
+  for (let i = 0; i < 81; i++) {
+    const v = AG.grid[i];
+    if (!v || AG.auto[i]) continue;
+    const P = PEERS[i];
+    for (let k = 0; k < 20; k++) {
+      const p = P[k];
+      if (AG.grid[p] === v && !AG.auto[p]) { bad[i] = true; any = true; break; }
+    }
+  }
+  return { bad, any };
+}
+
+function agRender() {
+  const { bad } = agConflicts();
+  const s = AG.sel;
+  const sv = s >= 0 ? AG.grid[s] : 0;
+  for (let i = 0; i < 81; i++) {
+    const v = AG.grid[i];
+    let cls = CELLBASE[i];
+    if (v) cls += AG.auto[i] ? ' answer' : ' given';
+    if (bad[i]) cls += ' err';
+    if (s >= 0) {
+      if (i === s) cls += ' sel';
+      else {
+        if (ROWOF[i] === ROWOF[s] || COLOF[i] === COLOF[s] || BOXOF[i] === BOXOF[s]) cls += ' peer';
+        if (sv && v === sv) cls += ' same';
+      }
+    }
+    const c = AG.cells[i];
+    if (c.className !== cls) c.className = cls;
+    const t = v ? String(v) : '';
+    if (c.textContent !== t) c.textContent = t;
+  }
+}
+
+function agSet(v) {
+  if (AG.busy || AG.sel < 0) return;
+  AG.grid[AG.sel] = v;
+  AG.auto[AG.sel] = false;
+  agMsg('');
+  agRender();
+}
+function agMove(dr, dc) {
+  if (AG.busy) return;
+  if (AG.sel < 0) { AG.sel = 40; agRender(); return; }
+  const r = Math.min(8, Math.max(0, ROWOF[AG.sel] + dr)), c = Math.min(8, Math.max(0, COLOF[AG.sel] + dc));
+  AG.sel = r * 9 + c;
+  agRender();
+}
+function agUnsolve() {
+  if (AG.busy) return;
+  for (let i = 0; i < 81; i++) if (AG.auto[i]) { AG.grid[i] = 0; AG.auto[i] = false; }
+  agMsg('');
+  agRender();
+}
+function agClear() {
+  if (AG.busy) return;
+  AG.grid.fill(0); AG.auto.fill(false); AG.sel = -1;
+  agMsg('');
+  agRender();
+}
+
+async function agRun() {
+  if (AG.busy) return;
+  agUnsolve();                                           // önceki çözümü temizle, yalnızca elle girilenleri kullan
+  const { any } = agConflicts();
+  if (any) { agMsg('Girdiğiniz rakamlarda çakışma var (kırmızı hücreler). Önce düzeltin.', 'err'); return; }
+  const puz = AG.grid.slice();
+  const clues = puz.reduce((n, v) => n + (v ? 1 : 0), 0);
+  if (clues === 81) { agMsg('Bulmaca zaten dolu ve geçerli.', 'ok'); return; }
+  AG.busy = true;
+  $('#agRun').disabled = true;
+  agMsg('Ajan çalışıyor…');
+  await new Promise(r => setTimeout(r, 40));            // arayüzün güncellenmesine izin ver
+  let sol = null, count = 0;
+  try {
+    sol = solveGrid(puz, false);
+    if (sol) count = countSolutions(puz, 2);
+  } catch (e) { console.error(e); }
+  if (!sol) {
+    AG.busy = false; $('#agRun').disabled = false;
+    agMsg('Bu bulmacanın çözümü yok. Girdiğiniz rakamları kontrol edin.', 'err');
+    return;
+  }
+  const empties = [];
+  for (let i = 0; i < 81; i++) if (!puz[i]) empties.push(i);
+  const delay = Math.max(4, Math.min(30, Math.floor(1200 / empties.length)));
+  for (const i of empties) {                            // hücreleri sırayla doldur (küçük animasyon)
+    if (!agentOpen()) break;
+    AG.grid[i] = sol[i]; AG.auto[i] = true;
+    agRender();
+    await new Promise(r => setTimeout(r, delay));
+  }
+  AG.busy = false;
+  $('#agRun').disabled = false;
+  agRender();
+  if (count >= 2) agMsg('Çözüldü, ancak bu bulmacanın birden fazla çözümü var; biri gösteriliyor.', 'ok');
+  else agMsg('Çözüldü! Ajan ' + empties.length + ' boş hücreyi doldurdu.', 'ok');
+}
+
+function agOpen() {
+  if (generating) return;
+  stopTimer();                                          // oyun süresi ajan açıkken durur
+  persist();
+  show('#ovAgent');
+  agRender();
+}
+function agClose() {
+  hide('#ovAgent');
+  resumeTimerIfNeeded();
+}
+function agBuild() {
+  const board = $('#agBoard');
+  for (let i = 0; i < 81; i++) {
+    const c = el('div', CELLBASE[i]);
+    c.dataset.i = i;
+    c.setAttribute('role', 'gridcell');
+    board.append(c); AG.cells.push(c);
+  }
+  board.addEventListener('click', e => {
+    const c = e.target.closest('.cell');
+    if (!c || AG.busy) return;
+    AG.sel = +c.dataset.i;
+    agRender();
+  });
+  const pad = $('#agPad');
+  for (let n = 1; n <= 9; n++) {
+    const b = el('button', 'nbtn', String(n));
+    b.type = 'button'; b.dataset.n = n; b.setAttribute('aria-label', 'Rakam ' + n);
+    pad.append(b);
+  }
+  const del = el('button', 'nbtn del', '⌫ Sil');
+  del.type = 'button'; del.dataset.n = 0;
+  pad.append(del);
+  pad.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (b) agSet(+b.dataset.n);
+  });
+  $('#btnAgent').onclick = agOpen;
+  $('#agClose').onclick = agClose;
+  $('#agRun').onclick = agRun;
+  $('#agUnsolve').onclick = agUnsolve;
+  $('#agClear').onclick = agClear;
 }
 
 /* ======================================================================
@@ -1441,6 +1625,7 @@ function init() {
   $('#difficulty').value = LEVELS[prefs.difficulty] ? prefs.difficulty : 'kolay';
   $('#chkErrors').checked = !!prefs.errors;
   buildNumpad();
+  agBuild();
 
   $('#btnGenerate').onclick = onGenerate;
   $('#btnReveal').onclick = onReveal;
@@ -1472,7 +1657,18 @@ function init() {
       if (!$('#ovConfirm').hidden) { $('#cfNo').click(); return; }
       if (!$('#ovStats').hidden) { hide('#ovStats'); return; }
       if (!$('#ovDone').hidden) { $('#dnSkip').click(); return; }
+      if (agentOpen()) { agClose(); return; }
       if (sel) { const b = sel.b; sel = null; refreshBoard(b); }
+      return;
+    }
+    // Ajan penceresi açıkken klavye girişi ajan tahtasına gider
+    if (agentOpen()) {
+      const onlyAgent = ['ovConfirm', 'ovStats', 'ovDone', 'ovGen'].every(id => $('#' + id).hidden);
+      if (!onlyAgent || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (/^[1-9]$/.test(e.key)) { e.preventDefault(); agSet(+e.key); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') { e.preventDefault(); agSet(0); return; }
+      const mv2 = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+      if (mv2) { e.preventDefault(); agMove(mv2[0], mv2[1]); }
       return;
     }
     if (modalOpen()) return;
@@ -1520,30 +1716,32 @@ function init() {
 
 if (typeof document !== 'undefined' && document.getElementById('boards')) init();
 </script>
- <!-- Hazırlayan Bilgisi -->
+
+<!-- Hazırlayan Bilgisi -->
 <div class="creator-signature">
-    <span class="creator-line"></span>
     <span class="creator-label">DESIGNED & DEVELOPED BY</span>
     <strong>ÖMER BORAN</strong>
     <span class="creator-subtitle">Tarafından hazırlanmıştır.</span>
 </div>
 
 <style>
+/* Varsayılan (telefon/tablet): sayfa akışının sonunda, tuş takımının ÜSTÜNDE durur, hiçbir şeyin üstüne binmez */
 .creator-signature {
-    position: fixed;
-    bottom: 15px;
-    right: 20px;
-    z-index: 9999;
+    position: static;
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
+    align-items: center;
+    width: fit-content;
+    max-width: calc(100% - 32px);
+    margin: 22px auto 0;
     font-family: 'Segoe UI', Arial, sans-serif;
-    padding: 10px 15px;
+    padding: 10px 18px;
     background: rgba(255, 255, 255, 0.94);
-    border-right: 3px solid #2563eb;
+    border-bottom: 3px solid #2563eb;
     border-radius: 6px;
     box-shadow: 0 3px 12px rgba(0,0,0,0.08);
     line-height: 1.5;
+    text-align: center;
 }
 
 .creator-label {
@@ -1563,6 +1761,21 @@ if (typeof document !== 'undefined' && document.getElementById('boards')) init()
 .creator-subtitle {
     font-size: 10px;
     color: #64748b;
+}
+
+/* Geniş ekranda (bilgisayar) sağ alta sabitlenir; tuş takımıyla çakışmaz */
+@media (min-width: 1100px) {
+    .creator-signature {
+        position: fixed;
+        bottom: 15px;
+        right: 20px;
+        z-index: 9;
+        margin: 0;
+        align-items: flex-end;
+        text-align: right;
+        border-bottom: 0;
+        border-right: 3px solid #2563eb;
+    }
 }
 
 @media print {
