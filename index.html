@@ -1520,5 +1520,59 @@ function init() {
 
 if (typeof document !== 'undefined' && document.getElementById('boards')) init();
 </script>
+ <!-- Hazırlayan Bilgisi -->
+<div class="creator-signature">
+    <span class="creator-line"></span>
+    <span class="creator-label">DESIGNED & DEVELOPED BY</span>
+    <strong>ÖMER BORAN</strong>
+    <span class="creator-subtitle">Tarafından hazırlanmıştır.</span>
+</div>
+
+<style>
+.creator-signature {
+    position: fixed;
+    bottom: 15px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    padding: 10px 15px;
+    background: rgba(255, 255, 255, 0.94);
+    border-right: 3px solid #2563eb;
+    border-radius: 6px;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+    line-height: 1.5;
+}
+
+.creator-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: #64748b;
+    font-weight: 600;
+}
+
+.creator-signature strong {
+    font-size: 15px;
+    letter-spacing: 1.5px;
+    color: #1e3a8a;
+    font-weight: 800;
+}
+
+.creator-subtitle {
+    font-size: 10px;
+    color: #64748b;
+}
+
+@media print {
+    .creator-signature {
+        position: fixed;
+        bottom: 8mm;
+        right: 8mm;
+        box-shadow: none;
+    }
+}
+</style>
 </body>
 </html>
