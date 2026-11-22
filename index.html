@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>Sudoku Atölyesi</title>
+<!--
+=====================================================================
+ SUDOKU ATÖLYESİ – TEK DOSYALIK, ÇEVRİMDIŞI WEB UYGULAMASI
+=====================================================================
+ MİMARİ
+ ------
+ 1) MOTOR (ENGINE START/END arası, DOM'a bağımlı değil)
+    - RNG            : crypto.getRandomValues tabanlı, yanlılıksız rastgele sayı üreteci
+    - solveGrid      : bit maskeli, MRV sezgisel backtracking çözücü (rastgele sıralı olabilir)
+    - countSolutions : çözüm sayısını (limit=2) sayan backtracking → TEK ÇÖZÜM kontrolü
+    - humanGrade     : insan tekniği çözücü. Teknik seviyeleri:
+                         1 = Çıplak/Gizli tek (naked/hidden single)
+                         2 = Kilitli adaylar (pointing/claiming), çıplak/gizli ikili
+                         3 = Çıplak/Gizli üçlü ve dörtlü, X-Wing, Swordfish, XY-Wing
+                         4 = Yukarıdakilerle çözülemiyor (deneme-yanılma gerekir)
+    - carve          : tam çözümden hücre silerek bulmaca üretir (Kolay, Uzman). Her silme
+                       sonrası bulmacanın TEK çözümlü ve hedef teknik seviyesinde kalması
+                       denetlenir. Rastgele silme YOK.
+    - carveByAdding  : Orta/Zor için: çözülemez minimal bulmacaya, ilk çözülebilir olana kadar
+                       ipucu eklenir (bulmaca hedef tekniğin tam sınırında kalır).
+    - transform      : satır/sütun/bant permütasyonu, transpoz, rakam yeniden adlandırma
+                       (çözüm sayısını ve tekniksel zorluğu değiştirmeyen dönüşümler)
+    - verifyPuzzle   : üretilen her bulmaca için nihai doğrulama (tek çözüm + tutarlılık)
+    - cyrb53 hash    : her bulmaca için benzersiz kimlik; localStorage'daki geçmişle
+                       karşılaştırılarak tekrar engellenir
+ 2) OYUN DURUMU  : G nesnesi, localStorage'a otomatik kaydedilir (yenilemede devam)
+ 3) ARAYÜZ       : 6 tahta, klavye + ekran tuş takımı, vurgulamalar, geri al
+ 4) ZAMANLAYICI  : performance.now() tabanlı (monoton), sekme gizlenince durur
+ 5) PDF          : Harici kütüphane YOK. Vektörel A4 PDF doğrudan üretilir (2x3 düzen)
+ 6) KAYITLAR     : tamamlama ekranı, isim kaydı, liderlik tablosu (localStorage)
+=====================================================================
+-->
+<style>
+:root{
+  --bg:#eef1f5; --surface:#ffffff; --ink:#1f2a37; --muted:#64748b; --line:#d6dde6;
+  --primary:#2c5d8f; --primary-d:#244d78; --primary-soft:#e3edf8;
+  --thin:#c3ccd8; --thick:#2b3a4d;
+  --given:#1b2430; --user:#1f6bd6; --answer:#d9480f;
+  --peer:#e8eff8; --same:#ffe69a; --sel:#b9d4f3;
+  --err-bg:#fbdcdc; --err:#c62828; --ok:#1f8a4c; --ok-soft:#e3f5ea;
+  --radius:14px;
+  --shadow:0 1px 2px rgba(20,35,55,.06),0 4px 14px rgba(20,35,55,.07);
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  line-height:1.45; padding-bottom:128px;
+}
+button,select,input{font:inherit;color:inherit}
+[hidden]{display:none!important}
+
+/* ---------- Üst çubuk ---------- */
+.topbar{
+  background:#fff; border-bottom:1px solid var(--line);
+  padding:14px clamp(12px,3vw,32px); display:flex; flex-wrap:wrap; gap:14px 24px;
+  align-items:center; justify-content:space-between; box-shadow:0 1px 0 rgba(0,0,0,.02);
+}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.logo{
+  width:42px;height:42px;border-radius:11px;background:var(--primary);color:#fff;
+  display:grid;place-items:center;font-size:24px;flex:none;
+}
+.brand h1{margin:0;font-size:1.25rem;letter-spacing:.2px}
+.brand p{margin:0;color:var(--muted);font-size:.82rem}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.field{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
+select{
+  appearance:none;-webkit-appearance:none;background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='2' fill='none' stroke-linecap='round'/></svg>") no-repeat right 12px center;
+  border:1px solid var(--line);border-radius:10px;padding:9px 34px 9px 12px;color:var(--ink);cursor:pointer;
+}
+select:focus-visible,.btn:focus-visible,.nbtn:focus-visible,input:focus-visible{outline:3px solid #9cc3ee;outline-offset:1px}
+.btn{
+  border:1px solid var(--line);background:#fff;color:var(--ink);padding:9px 15px;border-radius:10px;
+  cursor:pointer;font-weight:600;font-size:.92rem;
+  transition:transform .12s ease,box-shadow .12s ease,background .12s ease,border-color .12s ease;
+}
+.btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 10px rgba(20,35,55,.12);border-color:#b8c4d3;background:#f8fafc}
+.btn:active:not(:disabled){transform:translateY(0) scale(.97);box-shadow:none}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.primary:hover:not(:disabled){background:var(--primary-d);border-color:var(--primary-d)}
+.btn.danger{background:#c0392b;border-color:#c0392b;color:#fff}
+.btn.danger:hover:not(:disabled){background:#a93226;border-color:#a93226}
+.check{display:flex;align-items:center;gap:6px;font-size:.88rem;color:var(--ink);cursor:pointer;user-select:none}
+.check input{width:17px;height:17px;accent-color:var(--primary)}
+.timer{
+  font-variant-numeric:tabular-nums;font-weight:700;font-size:1.15rem;letter-spacing:.5px;
+  background:#101c2b;color:#e8f1fb;border-radius:10px;padding:7px 14px;min-width:104px;text-align:center;
+}
+
+/* ---------- Durum çubuğu ---------- */
+.status{
+  position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;justify-content:space-between;
+  padding:9px clamp(12px,3vw,32px);background:rgba(238,241,245,.94);backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);font-size:.9rem;
+}
+.status .left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pill{background:var(--primary-soft);color:var(--primary-d);border-radius:999px;padding:2px 11px;font-weight:600;font-size:.82rem}
+.pill.warn{background:#fff1d6;color:#8a5a00}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.timer-mini{font-variant-numeric:tabular-nums;font-weight:700}
+
+/* ---------- Tahtalar ---------- */
+main{padding:clamp(12px,3vw,32px);max-width:1500px;margin:0 auto}
+.boards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:clamp(12px,2vw,24px)}
+.board-card{
+  background:var(--surface);border:2px solid transparent;border-radius:var(--radius);box-shadow:var(--shadow);
+  padding:12px 14px 14px;width:100%;max-width:480px;margin:0 auto;transition:border-color .15s ease;
+}
+.board-card.active{border-color:var(--primary)}
+.board-card.done{border-color:var(--ok)}
+.board-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+.board-head h2{margin:0;font-size:1.02rem}
+.badge{background:var(--primary-soft);color:var(--primary-d);border-radius:6px;padding:1px 8px;font-size:.76rem;font-weight:700}
+.bid{margin-left:auto;color:var(--muted);font-size:.72rem;font-family:ui-monospace,Menlo,Consolas,monospace}
+.tick{color:var(--ok);font-weight:700;font-size:.8rem}
+.board{
+  display:grid;grid-template-columns:repeat(9,1fr);grid-template-rows:repeat(9,1fr);
+  aspect-ratio:1/1;width:100%;background:#fff;border:2px solid var(--thick);border-radius:6px;overflow:hidden;
+  container-type:inline-size;
+}
+.cell{
+  min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;
+  border-right:1px solid var(--thin);border-bottom:1px solid var(--thin);
+  font-size:clamp(15px,4.6vw,26px);font-weight:500;cursor:pointer;user-select:none;-webkit-user-select:none;
+  -webkit-tap-highlight-color:transparent;color:var(--user);transition:background-color .08s ease;
+}
+@supports (font-size:1cqw){.cell{font-size:5.8cqw}}
+.cell:nth-child(9n){border-right:0}
+.cell:nth-child(n+73){border-bottom:0}
+.cell.bx{border-right:2px solid var(--thick)}
+.cell.by{border-bottom:2px solid var(--thick)}
+.cell.given{color:var(--given);font-weight:700}
+.cell.user{color:var(--user)}
+.cell.answer{color:var(--answer);font-weight:700}
+.cell.peer{background:var(--peer)}
+.cell.same{background:var(--same)}
+.cell.err{background:var(--err-bg);color:var(--err)}
+.cell.sel{background:var(--sel)}
+.cell:hover:not(.sel){filter:brightness(.97)}
+
+.empty{
+  text-align:center;background:#fff;border:2px dashed var(--line);border-radius:var(--radius);
+  padding:48px 20px;color:var(--muted);max-width:640px;margin:30px auto
+}
+.empty h2{color:var(--ink);margin:0 0 8px}
+
+/* ---------- Ekran tuş takımı ---------- */
+.numpad{
+  position:fixed;left:50%;bottom:max(10px,env(safe-area-inset-bottom));transform:translateX(-50%);
+  width:min(calc(100% - 16px),640px);z-index:30;background:rgba(255,255,255,.97);border:1px solid var(--line);
+  border-radius:16px;box-shadow:0 8px 28px rgba(20,35,55,.2);padding:8px;
+  display:grid;grid-template-columns:repeat(9,1fr);gap:6px;
+}
+.nbtn{
+  border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px 0;font-weight:700;font-size:1.1rem;cursor:pointer;
+  transition:transform .1s ease,background .1s ease;color:var(--user)
+}
+.nbtn:hover{background:var(--primary-soft)}
+.nbtn:active{transform:scale(.92)}
+.nbtn.act{font-size:.86rem;color:var(--ink);grid-column:span 4}
+.nbtn.act.wide{grid-column:span 5}
+@media(min-width:700px){
+  .numpad{grid-template-columns:repeat(9,1fr) 1.6fr 1.6fr}
+  .nbtn.act,.nbtn.act.wide{grid-column:auto}
+}
+
+/* ---------- Modallar ---------- */
+.overlay{
+  position:fixed;inset:0;background:rgba(15,25,40,.55);display:flex;align-items:center;justify-content:center;
+  z-index:100;padding:14px;animation:fade .15s ease
+}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes pop{from{transform:translateY(10px) scale(.97);opacity:0}to{transform:none;opacity:1}}
+.modal{
+  background:#fff;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);width:min(100%,520px);max-height:92vh;
+  overflow:auto;padding:22px;animation:pop .18s ease
+}
+.modal.wide{width:min(100%,760px)}
+.modal h2{margin:0 0 6px;font-size:1.3rem}
+.modal p{margin:6px 0;color:var(--muted)}
+.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
+.trophy{font-size:46px;text-align:center;line-height:1}
+.center{text-align:center}
+.sgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:16px 0}
+.sbox{background:#f5f8fb;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.sbox b{display:block;font-size:1.25rem;font-variant-numeric:tabular-nums}
+.sbox span{font-size:.78rem;color:var(--muted)}
+.name-input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:1rem;margin-top:6px}
+.err-text{color:var(--err);font-size:.85rem;min-height:1.2em;margin-top:4px}
+.progress{height:10px;background:#e4eaf1;border-radius:999px;overflow:hidden;margin-top:14px}
+.progress i{display:block;height:100%;width:0;background:var(--primary);transition:width .25s ease}
+.spinner{width:34px;height:34px;border:4px solid #d4e1f0;border-top-color:var(--primary);border-radius:50%;margin:4px auto 12px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.tab{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;font-weight:600;font-size:.86rem;transition:background .12s}
+.tab:hover{background:#f1f5f9}
+.tab.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+.toolrow{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.tablewrap{overflow-x:auto;margin:8px 0 14px;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:420px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #edf1f5;white-space:nowrap}
+th{background:#f5f8fb;font-size:.78rem;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums}
+tr.hl td{background:#fff7dc}
+h3.sec{margin:16px 0 0;font-size:1rem}
+.muted{color:var(--muted)}
+.toast{
+  position:fixed;left:50%;top:18px;transform:translate(-50%,-80px);background:#1b2a3b;color:#fff;padding:10px 18px;
+  border-radius:12px;z-index:200;transition:transform .25s ease;box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:92vw;font-size:.92rem
+}
+.toast.show{transform:translate(-50%,0)}
+
+@media(max-width:640px){
+  .controls{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .controls .field{grid-column:1/-1}
+  .controls .field select{flex:1}
+  .controls .timer{grid-column:1/-1}
+  .controls .check{grid-column:1/-1}
+  .btn{padding:10px 8px}
+}
+@media(min-width:900px){.topbar{position:sticky;top:0;z-index:25}.status{top:var(--tb,76px)}}
+</style>
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">▦</div>
+    <div>
+      <h1>Sudoku Atölyesi</h1>
+      <p>Tek çözümlü 6 bulmaca · çevrimdışı çalışır</p>
+    </div>
+  </div>
+  <div class="controls" role="toolbar" aria-label="Kontroller">
+    <label class="field">Zorluk
+      <select id="difficulty" aria-label="Zorluk seviyesi">
+        <option value="kolay">Kolay</option>
+        <option value="orta">Orta</option>
+        <option value="zor">Zor</option>
+        <option value="uzman">Uzman</option>
+      </select>
+    </label>
+    <button class="btn primary" id="btnGenerate" type="button">Oluştur</button>
+    <button class="btn" id="btnReveal" type="button">Cevapları Getir</button>
+    <button class="btn" id="btnPdf" type="button">PDF Oluştur</button>
+    <button class="btn" id="btnStats" type="button">İstatistikler</button>
+    <label class="check"><input type="checkbox" id="chkErrors"> Hata kontrolü</label>
+    <div class="timer js-timer" id="timer" title="Geçen süre">00:00:00</div>
+  </div>
+</header>
+
+<div class="status" id="statusBar">
+  <div class="left" id="statusLeft"><span class="muted">Henüz bulmaca yok</span></div>
+  <div class="timer-mini js-timer">00:00:00</div>
+</div>
+
+<main>
+  <div class="boards" id="boards"></div>
+  <div class="empty" id="empty">
+    <h2>Hoş geldiniz!</h2>
+    <p>Bir zorluk seviyesi seçip <b>Oluştur</b> düğmesine basın. Her seferinde birbirinden farklı,
+    tek çözümlü 6 Sudoku üretilir. Süre bulmacalar oluşunca başlar.</p>
+    <p class="muted" style="font-size:.85rem">Rakam girmek için bir hücreye dokunun/tıklayın, ardından klavyeyi (1–9) veya alttaki tuş takımını kullanın.</p>
+  </div>
+  <noscript><p>Bu uygulama JavaScript gerektirir.</p></noscript>
+</main>
+
+<nav class="numpad" id="numpad" aria-label="Rakam tuş takımı"></nav>
+
+<!-- Onay penceresi -->
+<div class="overlay" id="ovConfirm" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
+    <h2 id="cfTitle"></h2>
+    <p id="cfText"></p>
+    <div class="actions">
+      <button class="btn" id="cfNo" type="button">Vazgeç</button>
+      <button class="btn danger" id="cfYes" type="button">Devam et</button>
+    </div>
+  </div>
+</div>
+
+<!-- Üretim ilerleme penceresi -->
+<div class="overlay" id="ovGen" hidden>
+  <div class="modal center" role="dialog" aria-modal="true" aria-live="polite">
+    <div class="spinner"></div>
+    <h2>Sudoku'lar üretiliyor…</h2>
+    <p id="genText">Hazırlanıyor</p>
+    <div class="progress"><i id="genBar"></i></div>
+    <p style="font-size:.82rem">Her bulmacanın tek çözümlü olduğu doğrulanıyor.</p>
+  </div>
+</div>
+
+<!-- Tamamlandı penceresi -->
+<div class="overlay" id="ovDone" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dnTitle">
+    <div class="trophy" aria-hidden="true">🏆</div>
+    <h2 class="center" id="dnTitle">Tebrikler!</h2>
+    <p class="center">6 Sudoku'nun tamamını hatasız çözdünüz.</p>
+    <div class="sgrid">
+      <div class="sbox"><b id="dnTime">00:00:00</b><span>Toplam çözme süresi</span></div>
+      <div class="sbox"><b id="dnCount">6 / 6</b><span>Tamamlanan Sudoku</span></div>
+      <div class="sbox"><b id="dnDiff">Kolay</b><span>Zorluk seviyesi</span></div>
+      <div class="sbox"><b>%100</b><span>Başarı · hatasız</span></div>
+    </div>
+    <label for="dnName"><b>Adınız</b></label>
+    <input class="name-input" id="dnName" type="text" maxlength="24" placeholder="Adınızı yazın" autocomplete="nickname">
+    <div class="err-text" id="dnErr" aria-live="polite"></div>
+    <div class="actions">
+      <button class="btn" id="dnSkip" type="button">Kaydetmeden kapat</button>
+      <button class="btn primary" id="dnSave" type="button">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- İstatistikler -->
+<div class="overlay" id="ovStats" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="stTitle">
+    <div class="toolrow">
+      <h2 id="stTitle">İstatistikler / Liderlik Tablosu</h2>
+      <button class="btn" id="stClose" type="button">Kapat</button>
+    </div>
+    <div class="tabs" id="stTabs"></div>
+    <div class="toolrow">
+      <label class="field">Sıralama
+        <select id="stSort"><option value="best">En iyi süre</option><option value="recent">En yeni</option></select>
+      </label>
+      <button class="btn" id="stClear" type="button">Kayıtları temizle</button>
+    </div>
+    <div id="stBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+/* ======================================================================
+   ENGINE START  –  Sudoku motoru (DOM'a bağımlı değildir)
+   ====================================================================== */
+
+/* ---- Rastgele sayı üretici (yanlılıksız) ---- */
+const RNG = (() => {
+  const buf = new Uint32Array(1);
+  const hasCrypto = typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function';
+  function u32() {
+    if (hasCrypto) { crypto.getRandomValues(buf); return buf[0]; }
+    return (Math.random() * 4294967296) >>> 0;
+  }
+  // 0..n-1 arası, modulo yanlılığı olmadan
+  function int(n) {
+    const lim = 4294967296 - (4294967296 % n);
+    let x;
+    do { x = u32(); } while (x >= lim);
+    return x % n;
+  }
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = int(i + 1);
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  return { int, shuffle };
+})();
+
+/* ---- Sabit tablolar: satır/sütun/kutu, birimler ve komşular ---- */
+const POP = new Uint8Array(512);              // bit sayısı tablosu
+for (let i = 1; i < 512; i++) POP[i] = POP[i >> 1] + (i & 1);
+const ROWOF = new Uint8Array(81), COLOF = new Uint8Array(81), BOXOF = new Uint8Array(81);
+const ROWU = [], COLU = [], BOXU = [], PEERS = [];
+for (let k = 0; k < 9; k++) { ROWU.push([]); COLU.push([]); BOXU.push([]); }
+for (let i = 0; i < 81; i++) {
+  const r = (i / 9) | 0, c = i % 9, b = ((r / 3) | 0) * 3 + ((c / 3) | 0);
+  ROWOF[i] = r; COLOF[i] = c; BOXOF[i] = b;
+  ROWU[r].push(i); COLU[c].push(i); BOXU[b].push(i);
+}
+const UNITS = ROWU.concat(COLU, BOXU);       // 27 birim
+for (let i = 0; i < 81; i++) {
+  const s = new Set([...ROWU[ROWOF[i]], ...COLU[COLOF[i]], ...BOXU[BOXOF[i]]]);
+  s.delete(i);
+  PEERS.push(Int8Array.from(s));              // her hücrenin 20 komşusu
+}
+
+/* ---- Çözücü: bit maskeli MRV backtracking ----
+   grid: 81 elemanlı dizi (0 = boş). Çözüm (Int8Array) veya null döner. */
+function solveGrid(grid, randomize) {
+  const g = Int8Array.from(grid);
+  const rows = new Int16Array(9), cols = new Int16Array(9), boxes = new Int16Array(9);
+  for (let i = 0; i < 81; i++) {
+    if (g[i]) {
+      const bit = 1 << (g[i] - 1), r = ROWOF[i], c = COLOF[i], b = BOXOF[i];
+      if ((rows[r] | cols[c] | boxes[b]) & bit) return null;   // başlangıçta çelişki
+      rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit;
+    }
+  }
+  function rec() {
+    let best = -1, bm = 0, bn = 10;
+    for (let i = 0; i < 81; i++) {
+      if (g[i]) continue;
+      const m = (~(rows[ROWOF[i]] | cols[COLOF[i]] | boxes[BOXOF[i]])) & 511;
+      const n = POP[m];
+      if (n < bn) { bn = n; best = i; bm = m; if (n <= 1) break; }
+    }
+    if (best < 0) return true;
+    if (bn === 0) return false;
+    const r = ROWOF[best], c = COLOF[best], b = BOXOF[best];
+    const ds = [];
+    for (let d = 0; d < 9; d++) if (bm & (1 << d)) ds.push(d);
+    if (randomize) RNG.shuffle(ds);
+    for (const d of ds) {
+      const bit = 1 << d;
+      g[best] = d + 1; rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit;
+      if (rec()) return true;
+      g[best] = 0; rows[r] &= ~bit; cols[c] &= ~bit; boxes[b] &= ~bit;
+    }
+    return false;
+  }
+  return rec() ? g : null;
+}
+
+/* ---- Çözüm sayısı (limit'e ulaşınca durur) → TEK ÇÖZÜM denetimi ---- */
+function countSolutions(grid, limit) {
+  const g = Int8Array.from(grid);
+  const rows = new Int16Array(9), cols = new Int16Array(9), boxes = new Int16Array(9);
+  for (let i = 0; i < 81; i++) {
+    if (g[i]) {
+      const bit = 1 << (g[i] - 1), r = ROWOF[i], c = COLOF[i], b = BOXOF[i];
+      if ((rows[r] | cols[c] | boxes[b]) & bit) return 0;
+      rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit;
+    }
+  }
+  let count = 0;
+  function rec() {
+    let best = -1, bm = 0, bn = 10;
+    for (let i = 0; i < 81; i++) {
+      if (g[i]) continue;
+      const m = (~(rows[ROWOF[i]] | cols[COLOF[i]] | boxes[BOXOF[i]])) & 511;
+      const n = POP[m];
+      if (n < bn) { bn = n; best = i; bm = m; if (n <= 1) break; }
+    }
+    if (best < 0) { count++; return; }
+    if (bn === 0) return;
+    const r = ROWOF[best], c = COLOF[best], b = BOXOF[best];
+    for (let d = 0; d < 9; d++) {
+      const bit = 1 << d;
+      if (!(bm & bit)) continue;
+      g[best] = d + 1; rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit;
+      rec();
+      g[best] = 0; rows[r] &= ~bit; cols[c] &= ~bit; boxes[b] &= ~bit;
+      if (count >= limit) return;
+    }
+  }
+  rec();
+  return count;
+}
+
+/* ---- Tam (dolu) geçerli ızgara üretimi ---- */
+function randomFullGrid() {
+  const g = new Array(81).fill(0);
+  // Çapraz 3 kutuyu rastgele doldur (birbirinden bağımsızdır), kalanını rastgele backtracking ile tamamla
+  for (const b of [0, 4, 8]) {
+    const digits = RNG.shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    BOXU[b].forEach((cell, k) => { g[cell] = digits[k]; });
+  }
+  const s = solveGrid(g, true);
+  return Array.from(s);
+}
+
+/* ---- İnsan tekniği çözücü: bulmacanın gerektirdiği en zor teknik seviyesini döner ----
+   Dönüş: 1..maxLevel (bulmaca çözüldü) veya 4 (izin verilen tekniklerle çözülemedi). */
+function humanGrade(grid, maxLevel) {
+  const val = new Int8Array(81), cand = new Int16Array(81);
+  const rows = new Int16Array(9), cols = new Int16Array(9), boxes = new Int16Array(9);
+  let empties = 0;
+  for (let i = 0; i < 81; i++) {
+    const v = grid[i];
+    if (v) {
+      const bit = 1 << (v - 1);
+      rows[ROWOF[i]] |= bit; cols[COLOF[i]] |= bit; boxes[BOXOF[i]] |= bit; val[i] = v;
+    }
+  }
+  for (let i = 0; i < 81; i++) {
+    if (!val[i]) { cand[i] = (~(rows[ROWOF[i]] | cols[COLOF[i]] | boxes[BOXOF[i]])) & 511; empties++; }
+  }
+  function place(i, d) {
+    val[i] = d; cand[i] = 0; empties--;
+    const bit = ~(1 << (d - 1)), P = PEERS[i];
+    for (let k = 0; k < 20; k++) cand[P[k]] &= bit;
+  }
+
+  // Seviye 1: çıplak tek + gizli tek
+  function singles() {
+    let any = false, prog = true;
+    while (prog) {
+      prog = false;
+      for (let i = 0; i < 81; i++) {
+        const m = cand[i];
+        if (m && (m & (m - 1)) === 0) { place(i, 32 - Math.clz32(m)); prog = any = true; }
+      }
+      for (let u = 0; u < 27; u++) {
+        const U = UNITS[u];
+        let once = 0, twice = 0;
+        for (let k = 0; k < 9; k++) { const m = cand[U[k]]; twice |= once & m; once |= m; }
+        let uniq = once & ~twice;
+        while (uniq) {
+          const bit = uniq & -uniq; uniq ^= bit;
+          for (let k = 0; k < 9; k++) {
+            const c = U[k];
+            if (cand[c] & bit) { place(c, 32 - Math.clz32(bit)); prog = any = true; break; }
+          }
+        }
+      }
+    }
+    return any;
+  }
+
+  // Seviye 2: kilitli adaylar (pointing / claiming)
+  function lockedCandidates() {
+    let did = false;
+    for (let b = 0; b < 9; b++) {
+      const cells = BOXU[b];
+      for (let d = 0; d < 9; d++) {
+        const bit = 1 << d;
+        let rm = 0, cm = 0, n = 0;
+        for (let k = 0; k < 9; k++) {
+          const c = cells[k];
+          if (cand[c] & bit) { rm |= 1 << ROWOF[c]; cm |= 1 << COLOF[c]; n++; }
+        }
+        if (n < 2) continue;
+        if (POP[rm] === 1) {
+          const r = 31 - Math.clz32(rm);
+          for (let k = 0; k < 9; k++) { const c = ROWU[r][k]; if (BOXOF[c] !== b && (cand[c] & bit)) { cand[c] &= ~bit; did = true; } }
+        }
+        if (POP[cm] === 1) {
+          const cc = 31 - Math.clz32(cm);
+          for (let k = 0; k < 9; k++) { const c = COLU[cc][k]; if (BOXOF[c] !== b && (cand[c] & bit)) { cand[c] &= ~bit; did = true; } }
+        }
+      }
+    }
+    for (let line = 0; line < 18; line++) {           // 0-8 satırlar, 9-17 sütunlar
+      const U = line < 9 ? ROWU[line] : COLU[line - 9];
+      for (let d = 0; d < 9; d++) {
+        const bit = 1 << d;
+        let bm = 0, n = 0;
+        for (let k = 0; k < 9; k++) { const c = U[k]; if (cand[c] & bit) { bm |= 1 << BOXOF[c]; n++; } }
+        if (n < 2 || POP[bm] !== 1) continue;
+        const b = 31 - Math.clz32(bm);
+        for (let k = 0; k < 9; k++) {
+          const c = BOXU[b][k];
+          const inLine = line < 9 ? ROWOF[c] === line : COLOF[c] === line - 9;
+          if (!inLine && (cand[c] & bit)) { cand[c] &= ~bit; did = true; }
+        }
+      }
+    }
+    return did;
+  }
+
+  // Çıplak ikili (n=2) / üçlü (n=3)
+  function nakedSubset(n) {
+    let did = false;
+    for (let u = 0; u < 27; u++) {
+      const U = UNITS[u], cs = [];
+      for (let k = 0; k < 9; k++) { const c = U[k]; if (cand[c] && POP[cand[c]] <= n) cs.push(c); }
+      if (cs.length < n) continue;
+      const apply = (sub, union) => {
+        for (let k = 0; k < 9; k++) {
+          const c = U[k];
+          if (sub.indexOf(c) < 0 && (cand[c] & union)) { cand[c] &= ~union; did = true; }
+        }
+      };
+      // n hücrenin aday birleşimi tam n rakamsa → bu rakamlar birimdeki diğer hücrelerden elenir
+      const chosen = [];
+      const combo = (start, union) => {
+        if (chosen.length === n) { if (POP[union] === n) apply(chosen.slice(), union); return; }
+        for (let a = start; a < cs.length; a++) {
+          const nu = union | cand[cs[a]];
+          if (POP[nu] > n) continue;
+          chosen.push(cs[a]); combo(a + 1, nu); chosen.pop();
+        }
+      };
+      combo(0, 0);
+    }
+    return did;
+  }
+
+  // Gizli ikili (n=2) / üçlü (n=3)
+  function hiddenSubset(n) {
+    let did = false;
+    for (let u = 0; u < 27; u++) {
+      const U = UNITS[u], pm = new Array(9).fill(0);
+      for (let k = 0; k < 9; k++) {
+        const m = cand[U[k]];
+        if (!m) continue;
+        for (let d = 0; d < 9; d++) if (m & (1 << d)) pm[d] |= 1 << k;
+      }
+      const ds = [];
+      for (let d = 0; d < 9; d++) if (POP[pm[d]] >= 2 && POP[pm[d]] <= n) ds.push(d);
+      if (ds.length < n) continue;
+      const tryDigits = (digs) => {
+        let pos = 0, dm = 0;
+        for (const d of digs) { pos |= pm[d]; dm |= 1 << d; }
+        if (POP[pos] !== digs.length) return;
+        for (let k = 0; k < 9; k++) {
+          if (!(pos & (1 << k))) continue;
+          const c = U[k], nm = cand[c] & dm;
+          if (nm !== cand[c]) { cand[c] = nm; did = true; }
+        }
+      };
+      const chosen = [];
+      const combo = (start, pos) => {
+        if (chosen.length === n) { tryDigits(chosen.slice()); return; }
+        for (let a = start; a < ds.length; a++) {
+          const np = pos | pm[ds[a]];
+          if (POP[np] > n) continue;
+          chosen.push(ds[a]); combo(a + 1, np); chosen.pop();
+        }
+      };
+      combo(0, 0);
+    }
+    return did;
+  }
+
+  // Swordfish (3 satır / 3 sütun)
+  function swordfish() {
+    let did = false;
+    for (let d = 0; d < 9; d++) {
+      const bit = 1 << d, rm = new Array(9).fill(0), cm = new Array(9).fill(0);
+      for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+        if (cand[r * 9 + c] & bit) { rm[r] |= 1 << c; cm[c] |= 1 << r; }
+      }
+      for (let a = 0; a < 9; a++) {
+        if (POP[rm[a]] < 2 || POP[rm[a]] > 3) continue;
+        for (let b = a + 1; b < 9; b++) {
+          if (POP[rm[b]] < 2 || POP[rm[b]] > 3) continue;
+          for (let c = b + 1; c < 9; c++) {
+            if (POP[rm[c]] < 2 || POP[rm[c]] > 3) continue;
+            const un = rm[a] | rm[b] | rm[c];
+            if (POP[un] !== 3) continue;
+            for (let cc = 0; cc < 9; cc++) if (un & (1 << cc))
+              for (let r = 0; r < 9; r++) if (r !== a && r !== b && r !== c && (cand[r * 9 + cc] & bit)) { cand[r * 9 + cc] &= ~bit; did = true; }
+          }
+        }
+      }
+      for (let a = 0; a < 9; a++) {
+        if (POP[cm[a]] < 2 || POP[cm[a]] > 3) continue;
+        for (let b = a + 1; b < 9; b++) {
+          if (POP[cm[b]] < 2 || POP[cm[b]] > 3) continue;
+          for (let c = b + 1; c < 9; c++) {
+            if (POP[cm[c]] < 2 || POP[cm[c]] > 3) continue;
+            const un = cm[a] | cm[b] | cm[c];
+            if (POP[un] !== 3) continue;
+            for (let rr = 0; rr < 9; rr++) if (un & (1 << rr))
+              for (let c2 = 0; c2 < 9; c2++) if (c2 !== a && c2 !== b && c2 !== c && (cand[rr * 9 + c2] & bit)) { cand[rr * 9 + c2] &= ~bit; did = true; }
+          }
+        }
+      }
+    }
+    return did;
+  }
+
+  // XY-Wing: pivot {a,b}, kanatlar {a,c} ve {b,c}; her iki kanadı gören hücrelerden c elenir
+  function xyWing() {
+    let did = false;
+    for (let p = 0; p < 81; p++) {
+      const pm = cand[p];
+      if (POP[pm] !== 2) continue;
+      const P = PEERS[p];
+      for (let x = 0; x < 20; x++) {
+        const X = P[x], xm = cand[X];
+        if (POP[xm] !== 2 || (xm & pm) === 0 || xm === pm) continue;
+        const cbit = xm & ~pm;                       // ortak olmayan rakam (c)
+        if (POP[cbit] !== 1) continue;
+        const need = (pm & ~xm) | cbit;              // ikinci kanat: {pivotun X'te olmayan rakamı, c}
+        for (let y = x + 1; y < 20; y++) {
+          const Y = P[y];
+          if (cand[Y] !== need) continue;
+          // X ve Y'nin ikisini de gören hücrelerden c'yi ele
+          const PX = PEERS[X];
+          for (let k = 0; k < 20; k++) {
+            const t = PX[k];
+            if (t === p || t === Y || !(cand[t] & cbit)) continue;
+            if (ROWOF[t] === ROWOF[Y] || COLOF[t] === COLOF[Y] || BOXOF[t] === BOXOF[Y]) { cand[t] &= ~cbit; did = true; }
+          }
+        }
+      }
+    }
+    return did;
+  }
+
+  // X-Wing (satır ve sütun yönlü)
+  function xwing() {
+    let did = false;
+    for (let d = 0; d < 9; d++) {
+      const bit = 1 << d, rm = new Array(9).fill(0), cm = new Array(9).fill(0);
+      for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+        if (cand[r * 9 + c] & bit) { rm[r] |= 1 << c; cm[c] |= 1 << r; }
+      }
+      for (let a = 0; a < 9; a++) {
+        for (let b = a + 1; b < 9; b++) {
+          if (POP[rm[a]] === 2 && rm[a] === rm[b]) {
+            for (let c = 0; c < 9; c++) if (rm[a] & (1 << c))
+              for (let r = 0; r < 9; r++) if (r !== a && r !== b && (cand[r * 9 + c] & bit)) { cand[r * 9 + c] &= ~bit; did = true; }
+          }
+          if (POP[cm[a]] === 2 && cm[a] === cm[b]) {
+            for (let r = 0; r < 9; r++) if (cm[a] & (1 << r))
+              for (let c = 0; c < 9; c++) if (c !== a && c !== b && (cand[r * 9 + c] & bit)) { cand[r * 9 + c] &= ~bit; did = true; }
+          }
+        }
+      }
+    }
+    return did;
+  }
+
+  let grade = 1;
+  for (;;) {
+    if (empties === 0) return grade;
+    if (singles()) continue;
+    if (empties === 0) return grade;
+    if (maxLevel >= 2 && (lockedCandidates() || nakedSubset(2) || hiddenSubset(2))) { if (grade < 2) grade = 2; continue; }
+    if (maxLevel >= 3 && (nakedSubset(3) || hiddenSubset(3) || xwing() || xyWing() || swordfish() || nakedSubset(4) || hiddenSubset(4))) { if (grade < 3) grade = 3; continue; }
+    return 4;
+  }
+}
+
+/* ---- Zorluk seviyesi ayarları ----
+   maxLevel : silme sırasında izin verilen en zor teknik
+   minGrade : bulmacanın gerektirmesi gereken en az teknik seviyesi
+   clues    : hedef ipucu (dolu hücre) aralığı                                  */
+const LEVELS = {
+  kolay: { name: 'Kolay', maxLevel: 1, minGrade: 1, clues: [36, 41], expert: false, method: 'remove' },
+  orta:  { name: 'Orta',  maxLevel: 2, minGrade: 2, clues: [22, 25], expert: false, method: 'add' },
+  zor:   { name: 'Zor',   maxLevel: 3, minGrade: 3, clues: [22, 25], expert: false, method: 'add' },
+  uzman: { name: 'Uzman', maxLevel: 3, minGrade: 4, clues: [22, 25], expert: true,  method: 'remove' }
+};
+const LEVEL_KEYS = ['kolay', 'orta', 'zor', 'uzman'];
+
+/* ---- Tarayıcıyı dondurmamak için yield ---- */
+let lastYield = 0;
+async function maybeYield() {
+  const now = performance.now();
+  if (now - lastYield > 30) {
+    await new Promise(r => setTimeout(r, 0));
+    lastYield = performance.now();
+  }
+}
+
+/* ---- Tam çözümden kontrollü hücre silme ----
+   Her silme: bulmaca (a) hâlâ TEK çözümlü ve (b) izin verilen tekniklerle çözülebilir olmalı. */
+async function carve(solution, cfg) {
+  const grid = Array.from(solution);
+  const order = RNG.shuffle(Array.from({ length: 81 }, (_, i) => i));
+  const target = cfg.clues[0] + RNG.int(cfg.clues[1] - cfg.clues[0] + 1);
+  let clues = 81, grade = 1;
+  for (const i of order) {
+    if (clues <= target && (cfg.expert || grade >= cfg.minGrade)) break;
+    const old = grid[i];
+    grid[i] = 0;
+    let ok;
+    if (cfg.expert) {
+      ok = countSolutions(grid, 2) === 1;               // uzman: yalnızca tek çözüm şartı
+    } else {
+      const g = humanGrade(grid, cfg.maxLevel);          // 1..maxLevel çözülür, 4 = çözülemez
+      ok = g <= cfg.maxLevel;
+      if (ok) grade = g;
+    }
+    if (ok) clues--; else grid[i] = old;
+    await maybeYield();
+  }
+  if (cfg.expert) grade = humanGrade(grid, 3);           // 4 ise ileri teknik/deneme gerekir
+  return { grid, clues, grade };
+}
+
+/* ---- Orta / Zor için: "ipucu ekleyerek" üretim ----
+   1) Tek çözümlü, minimal bir bulmaca üretilir (genelde ileri teknik gerektirir).
+   2) İzin verilen tekniklerle (maxLevel) çözülemiyorsa, rastgele sırayla ÇÖZÜMDEN
+      ipucu geri eklenir; bulmaca ilk kez çözülebilir olduğu anda durulur.
+   Böylece bulmaca, hedef seviyedeki tekniğe "tam sınırda" kalır. Ekleme tek çözümlülüğü bozmaz. */
+async function carveByAdding(solution, cfg) {
+  const base = await carve(solution, { clues: cfg.clues, expert: true, minGrade: 0, maxLevel: 3 });
+  const grid = base.grid;
+  let clues = base.clues;
+  let g = humanGrade(grid, cfg.maxLevel);
+  if (g <= cfg.maxLevel) return { grid, clues, grade: g };
+  const empties = [];
+  for (let i = 0; i < 81; i++) if (!grid[i]) empties.push(i);
+  RNG.shuffle(empties);
+  for (const i of empties) {
+    grid[i] = solution[i]; clues++;
+    g = humanGrade(grid, cfg.maxLevel);
+    if (g <= cfg.maxLevel) return { grid, clues, grade: g };
+    await maybeYield();
+  }
+  return { grid, clues, grade: 4 };
+}
+
+/* ---- Dönüşümler: çözüm sayısını ve tekniksel zorluğu değiştirmez ---- */
+function transform(puz, sol) {
+  const bands = RNG.shuffle([0, 1, 2]), stacks = RNG.shuffle([0, 1, 2]);
+  const rowMap = [], colMap = [];
+  for (const b of bands) for (const r of RNG.shuffle([0, 1, 2])) rowMap.push(b * 3 + r);
+  for (const s of stacks) for (const c of RNG.shuffle([0, 1, 2])) colMap.push(s * 3 + c);
+  const digit = [0].concat(RNG.shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+  const T = RNG.int(2) === 1;                            // transpoz
+  const outP = new Array(81), outS = new Array(81);
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    const src = T ? colMap[c] * 9 + rowMap[r] : rowMap[r] * 9 + colMap[c];
+    outP[r * 9 + c] = digit[puz[src]];
+    outS[r * 9 + c] = digit[sol[src]];
+  }
+  return { puz: outP, sol: outS };
+}
+
+/* ---- Nihai doğrulama ---- */
+function verifyPuzzle(puz, sol) {
+  for (let u = 0; u < 27; u++) {                         // çözüm geçerli mi?
+    let m = 0;
+    for (let k = 0; k < 9; k++) { const v = sol[UNITS[u][k]]; if (v < 1 || v > 9) return false; m |= 1 << (v - 1); }
+    if (m !== 511) return false;
+  }
+  for (let i = 0; i < 81; i++) if (puz[i] && puz[i] !== sol[i]) return false;   // ipuçları çözümle uyumlu mu?
+  if (countSolutions(puz, 2) !== 1) return false;        // tam olarak tek çözüm
+  const s = solveGrid(puz, false);
+  if (!s) return false;
+  for (let i = 0; i < 81; i++) if (s[i] !== sol[i]) return false;
+  return true;
+}
+
+/* ---- cyrb53 hash (53 bit) → 14 haneli onaltılık kimlik ---- */
+function cyrb53(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0').slice(0, 6);
+}
+
+/* ---- Tek bir bulmaca üret (doğrulanmış) ---- */
+async function generatePuzzle(levelKey) {
+  const cfg = LEVELS[levelKey];
+  let best = null;
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const full = randomFullGrid();
+    const r = cfg.method === 'add' ? await carveByAdding(full, cfg) : await carve(full, cfg);
+    const fits = r.grade === cfg.minGrade;                // gerçek teknik seviyesi hedefle birebir aynı mı?
+    const cand = { full, r, fits, dist: Math.abs(r.grade - cfg.minGrade) };
+    if (fits) { best = cand; break; }
+    if (best === null || cand.dist < best.dist) best = cand;   // eşleşme olmazsa en yakınını tut
+    await maybeYield();
+  }
+  const t = transform(best.r.grid, best.full);
+  if (!verifyPuzzle(t.puz, t.sol)) throw new Error('Doğrulama başarısız');
+  const puzStr = t.puz.join('');
+  return {
+    puz: t.puz, sol: t.sol, clues: best.r.clues, grade: best.r.grade,
+    matched: best.fits, hash: cyrb53(puzStr)
+  };
+}
+
+/* ---- 6 farklı bulmaca üret; geçmişte görülenlerle çakışanları ele ---- */
+async function generateBatch(levelKey, seenSet, onProgress) {
+  const out = [], used = new Set(seenSet);
+  for (let k = 0; k < 6; k++) {
+    if (onProgress) onProgress(k);
+    let p, guard = 0;
+    do { p = await generatePuzzle(levelKey); guard++; } while (used.has(p.hash) && guard < 25);
+    used.add(p.hash);
+    out.push(p);
+  }
+  return out;
+}
+/* ======================================================================
+   ENGINE END
+   ====================================================================== */
+
+/* ======================================================================
+   UYGULAMA KATMANI
+   ====================================================================== */
+const $ = s => document.querySelector(s);
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+/* ---- localStorage yardımcıları (hata durumunda sessizce devam eder) ---- */
+const STORE = { game: 'sudokuAtolyesi.v1.game', rec: 'sudokuAtolyesi.v1.records', seen: 'sudokuAtolyesi.v1.seen', prefs: 'sudokuAtolyesi.v1.prefs' };
+function lsLoad(key, def) { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : def; } catch (e) { return def; } }
+function lsSave(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); return true; } catch (e) { return false; } }
+
+/* ---- Genel durum ---- */
+let G = null;                 // aktif oyun
+let sel = null;               // seçili hücre {b,i}
+let history = [];             // geri alma yığını
+let boardEls = [];            // DOM referansları
+let solvedFlags = [];
+let generating = false;
+let prefs = Object.assign({ difficulty: 'kolay', errors: false, name: '' }, lsLoad(STORE.prefs, {}));
+const CELLBASE = [];
+for (let i = 0; i < 81; i++) {
+  CELLBASE.push('cell' + ((COLOF[i] % 3 === 2 && COLOF[i] !== 8) ? ' bx' : '') + ((ROWOF[i] % 3 === 2 && ROWOF[i] !== 8) ? ' by' : ''));
+}
+
+/* ---- Zamanlayıcı (performance.now ile monoton; sekme gizlenince durur) ---- */
+let timerRunning = false, tickBase = 0, elapsedBase = 0;
+function currentElapsed() { return timerRunning ? elapsedBase + (performance.now() - tickBase) : elapsedBase; }
+function startTimer() { if (timerRunning) return; tickBase = performance.now(); timerRunning = true; }
+function stopTimer() { if (!timerRunning) return; elapsedBase += performance.now() - tickBase; timerRunning = false; }
+function timerShouldRun() { return !!G && !G.completed && !G.revealed && !generating && !document.hidden; }
+function resumeTimerIfNeeded() { if (timerShouldRun()) startTimer(); }
+function fmtTime(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':');
+}
+function updateTimerDisplay() {
+  const t = G ? (G.completed ? G.finalTime : currentElapsed()) : 0;
+  const txt = fmtTime(t);
+  document.querySelectorAll('.js-timer').forEach(e => { if (e.textContent !== txt) e.textContent = txt; });
+}
+
+/* ---- Oyun durumunu kaydet / yükle ---- */
+function persist() {
+  if (!G) return;
+  G.elapsed = G.completed ? G.finalTime : Math.round(currentElapsed());
+  const s = {
+    gameId: G.gameId, difficulty: G.difficulty, elapsed: G.elapsed, revealed: G.revealed,
+    answersVisible: G.answersVisible, completed: G.completed, recorded: G.recorded, finalTime: G.finalTime, createdAt: G.createdAt,
+    boards: G.boards.map(b => ({ id: b.id, puz: b.puz.join(''), sol: b.sol.join(''), ent: b.entries.join(''), clues: b.clues }))
+  };
+  lsSave(STORE.game, s);
+}
+function restoreGame(s) {
+  try {
+    if (!s || !Array.isArray(s.boards) || s.boards.length !== 6 || !LEVELS[s.difficulty]) return null;
+    const boards = s.boards.map(b => {
+      if (typeof b.puz !== 'string' || b.puz.length !== 81 || b.sol.length !== 81 || b.ent.length !== 81) throw new Error('bad');
+      if (!/^[0-9]{81}$/.test(b.puz + '') || !/^[1-9]{81}$/.test(b.sol) || !/^[0-9]{81}$/.test(b.ent)) throw new Error('bad');
+      return { id: b.id, puz: b.puz.split('').map(Number), sol: b.sol.split('').map(Number), entries: b.ent.split('').map(Number), clues: b.clues };
+    });
+    return {
+      gameId: s.gameId, difficulty: s.difficulty, boards, elapsed: +s.elapsed || 0, revealed: !!s.revealed,
+      answersVisible: !!s.answersVisible, completed: !!s.completed, recorded: !!s.recorded,
+      finalTime: +s.finalTime || 0, createdAt: s.createdAt || Date.now()
+    };
+  } catch (e) { return null; }
+}
+
+/* ---- Toast ---- */
+let toastTimer = 0;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+/* ---- Modal yardımcıları ---- */
+function show(id) { $(id).hidden = false; }
+function hide(id) { $(id).hidden = true; }
+function modalOpen() { return [...document.querySelectorAll('.overlay')].some(o => !o.hidden); }
+function askConfirm(title, text, okText) {
+  return new Promise(resolve => {
+    $('#cfTitle').textContent = title;
+    $('#cfText').textContent = text;
+    $('#cfYes').textContent = okText || 'Devam et';
+    show('#ovConfirm');
+    $('#cfNo').focus();
+    const done = v => { hide('#ovConfirm'); $('#cfYes').onclick = null; $('#cfNo').onclick = null; resolve(v); };
+    $('#cfYes').onclick = () => done(true);
+    $('#cfNo').onclick = () => done(false);
+  });
+}
+
+/* ---- Tahta çizimi ---- */
+function renderBoards() {
+  const root = $('#boards');
+  root.textContent = '';
+  boardEls = [];
+  if (!G) { $('#empty').hidden = false; return; }
+  $('#empty').hidden = true;
+  G.boards.forEach((bd, b) => {
+    const card = el('section', 'board-card');
+    const head = el('div', 'board-head');
+    const tick = el('span', 'tick', '');
+    head.append(el('h2', '', 'Sudoku ' + (b + 1)), el('span', 'badge', LEVELS[G.difficulty].name),
+      tick, el('span', 'bid', '#' + bd.id.slice(0, 8).toUpperCase()));
+    const grid = el('div', 'board');
+    grid.setAttribute('role', 'grid');
+    grid.setAttribute('aria-label', 'Sudoku ' + (b + 1));
+    const cells = [];
+    for (let i = 0; i < 81; i++) {
+      const c = el('div', CELLBASE[i]);
+      c.dataset.b = b; c.dataset.i = i;
+      c.setAttribute('role', 'gridcell');
+      grid.append(c); cells.push(c);
+    }
+    card.append(head, grid);
+    root.append(card);
+    boardEls.push({ card, cells, tick });
+  });
+  solvedFlags = new Array(6).fill(false);
+  refreshAll();
+}
+
+function shownValue(b, i) {
+  const bd = G.boards[b];
+  if (bd.puz[i]) return bd.puz[i];
+  const e = bd.entries[i];
+  if (G.answersVisible) return (e && e === bd.sol[i]) ? e : bd.sol[i];
+  return e;
+}
+
+function refreshBoard(b) {
+  if (!G || !boardEls[b]) return;
+  const bd = G.boards[b], { cells, card, tick } = boardEls[b];
+  const selHere = !!sel && sel.b === b;
+  let selVal = 0, sr = -1, sc = -1, sb = -1;
+  if (selHere) { selVal = shownValue(b, sel.i); sr = ROWOF[sel.i]; sc = COLOF[sel.i]; sb = BOXOF[sel.i]; }
+  let solved = true;
+  for (let i = 0; i < 81; i++) {
+    const given = bd.puz[i], e = bd.entries[i], sol = bd.sol[i];
+    let cls = CELLBASE[i], v;
+    if (given) { v = given; cls += ' given'; }
+    else if (e) {
+      if (G.answersVisible && e !== sol) { v = sol; cls += ' answer'; }
+      else { v = e; cls += ' user'; }
+    } else if (G.answersVisible) { v = sol; cls += ' answer'; }
+    else v = 0;
+    if (!given && e !== sol) solved = false;
+    if (prefs.errors && !given && e && e !== sol && !G.answersVisible) cls += ' err';
+    if (selHere) {
+      if (i === sel.i) cls += ' sel';
+      else {
+        if (ROWOF[i] === sr || COLOF[i] === sc || BOXOF[i] === sb) cls += ' peer';
+        if (selVal && v === selVal) cls += ' same';
+      }
+    }
+    const cell = cells[i];
+    if (cell.className !== cls) cell.className = cls;
+    const txt = v ? String(v) : '';
+    if (cell.textContent !== txt) cell.textContent = txt;
+  }
+  solvedFlags[b] = solved;
+  card.classList.toggle('done', solved);
+  card.classList.toggle('active', selHere);
+  tick.textContent = solved ? '✓ Çözüldü' : '';
+}
+function refreshAll() { for (let b = 0; b < 6; b++) refreshBoard(b); updateStatus(); }
+
+/* ---- Durum çubuğu ve düğmeler ---- */
+function updateStatus() {
+  const left = $('#statusLeft');
+  left.textContent = '';
+  if (!G) {
+    left.append(el('span', 'muted', 'Henüz bulmaca yok'));
+  } else {
+    const n = solvedFlags.filter(Boolean).length;
+    left.append(el('span', 'pill', 'Seviye: ' + LEVELS[G.difficulty].name));
+    left.append(el('span', '', 'Tamamlanan Sudoku: ' + n + ' / 6'));
+    if (G.completed) left.append(el('span', 'pill ok', G.recorded ? 'Tamamlandı · kaydedildi' : 'Tamamlandı'));
+    else if (G.revealed) left.append(el('span', 'pill warn', 'Cevaplar görüldü · skor kaydedilmez'));
+    if (G.completed && !G.recorded && !G.revealed) {
+      const b = el('button', 'btn', 'Sonucu kaydet');
+      b.type = 'button'; b.style.padding = '3px 10px';
+      b.onclick = openComplete;
+      left.append(b);
+    }
+  }
+  updateButtons();
+}
+function updateButtons() {
+  const busy = generating;
+  $('#btnGenerate').disabled = busy;
+  $('#difficulty').disabled = busy;
+  $('#btnReveal').disabled = busy || !G || G.completed;
+  $('#btnReveal').textContent = (G && G.answersVisible) ? 'Cevapları Gizle' : 'Cevapları Getir';
+  $('#btnPdf').disabled = busy || !G;
+}
+
+/* ---- Girdi işlemleri ---- */
+function inputAllowed() { return !!G && !G.completed && !G.revealed && !generating; }
+function selectCell(b, i) {
+  const old = sel;
+  sel = { b, i };
+  if (old && old.b !== b) refreshBoard(old.b);
+  refreshBoard(b);
+}
+function setCell(v) {
+  if (!sel || !inputAllowed()) return;
+  const { b, i } = sel, bd = G.boards[b];
+  if (bd.puz[i]) return;                               // başlangıç rakamları değiştirilemez
+  const prev = bd.entries[i];
+  if (prev === v) return;
+  bd.entries[i] = v;
+  history.push({ b, i, prev, next: v });
+  if (history.length > 1000) history.shift();
+  afterChange(b);
+}
+function undo() {
+  if (!inputAllowed() || !history.length) { if (G && !history.length) toast('Geri alınacak işlem yok'); return; }
+  const h = history.pop();
+  G.boards[h.b].entries[h.i] = h.prev;
+  const old = sel;
+  sel = { b: h.b, i: h.i };
+  if (old && old.b !== h.b) refreshBoard(old.b);
+  afterChange(h.b);
+}
+let saveCounter = 0;
+function afterChange(b) {
+  refreshBoard(b);
+  updateStatus();
+  persist();
+  if (solvedFlags.every(Boolean) && !G.completed && !G.revealed) finishGame();
+}
+function moveSel(dr, dc) {
+  if (!sel) { selectCell(0, 40); return; }
+  const r = Math.min(8, Math.max(0, ROWOF[sel.i] + dr)), c = Math.min(8, Math.max(0, COLOF[sel.i] + dc));
+  selectCell(sel.b, r * 9 + c);
+}
+
+/* ---- Oyun bitişi ve kayıt ---- */
+function finishGame() {
+  stopTimer();
+  G.completed = true;
+  G.finalTime = Math.round(elapsedBase);
+  persist();
+  updateStatus();
+  updateTimerDisplay();
+  setTimeout(openComplete, 450);
+}
+function openComplete() {
+  if (!G || !G.completed || G.revealed || G.recorded) return;
+  $('#dnTime').textContent = fmtTime(G.finalTime);
+  $('#dnCount').textContent = '6 / 6';
+  $('#dnDiff').textContent = LEVELS[G.difficulty].name;
+  $('#dnName').value = prefs.name || '';
+  $('#dnErr').textContent = '';
+  show('#ovDone');
+  setTimeout(() => $('#dnName').focus(), 50);
+}
+function saveRecord() {
+  if (!G || !G.completed || G.revealed) return;
+  const name = $('#dnName').value.trim().replace(/\s+/g, ' ').slice(0, 24);
+  if (!name) { $('#dnErr').textContent = 'Lütfen bir isim girin.'; return; }
+  if (G.recorded) { hide('#ovDone'); return; }
+  const recs = lsLoad(STORE.rec, []);
+  if (!recs.some(r => r.gameId === G.gameId)) {          // aynı oyun ikinci kez kaydedilemez
+    recs.push({ gameId: G.gameId, name, timeMs: G.finalTime, date: new Date().toISOString(), difficulty: G.difficulty });
+    lsSave(STORE.rec, recs);
+  }
+  G.recorded = true;
+  prefs.name = name; lsSave(STORE.prefs, prefs);
+  persist(); updateStatus();
+  hide('#ovDone');
+  toast('Sonucunuz kaydedildi');
+  openStats(G.difficulty, G.gameId);
+}
+
+/* ---- Yeni oyun ---- */
+function newGame(diff, puzzles) {
+  G = {
+    gameId: Date.now().toString(36) + RNG.int(1e9).toString(36), difficulty: diff,
+    boards: puzzles.map(p => ({ id: p.hash, puz: p.puz, sol: p.sol, entries: new Array(81).fill(0), clues: p.clues })),
+    elapsed: 0, revealed: false, answersVisible: false, completed: false, recorded: false, finalTime: 0, createdAt: Date.now()
+  };
+  elapsedBase = 0; timerRunning = false; history = []; sel = null;
+  const seen = lsLoad(STORE.seen, []);
+  puzzles.forEach(p => seen.push(p.hash));
+  lsSave(STORE.seen, seen.slice(-3000));                 // geçmiş bulmaca kimlikleri
+  startTimer();
+  persist();
+  renderBoards();
+  updateTimerDisplay();
+}
+
+async function onGenerate() {
+  if (generating) return;
+  if (G && !G.completed && !G.revealed) {
+    const ok = await askConfirm('Mevcut oyun sıfırlanacak', 'Devam eden oyununuz ve geçen süreniz silinecek. Yeni 6 Sudoku oluşturulsun mu?', 'Evet, yeni oluştur');
+    if (!ok) return;
+  } else if (G && G.completed && !G.recorded && !G.revealed) {
+    const ok = await askConfirm('Sonucunuz kaydedilmedi', 'Tamamladığınız oyunun sonucu henüz kaydedilmedi. Yine de yeni Sudoku oluşturulsun mu?', 'Evet, yeni oluştur');
+    if (!ok) return;
+  }
+  const diff = $('#difficulty').value;
+  prefs.difficulty = diff; lsSave(STORE.prefs, prefs);
+  generating = true; stopTimer(); updateButtons();
+  $('#genBar').style.width = '3%'; $('#genText').textContent = 'Hazırlanıyor';
+  show('#ovGen');
+  try {
+    await new Promise(r => setTimeout(r, 30));
+    lastYield = performance.now();
+    const seenSet = new Set(lsLoad(STORE.seen, []));
+    const puzzles = await generateBatch(diff, seenSet, k => {
+      $('#genText').textContent = 'Sudoku ' + (k + 1) + ' / 6 üretiliyor (' + LEVELS[diff].name + ')';
+      $('#genBar').style.width = Math.round((k / 6) * 100 + 3) + '%';
+    });
+    $('#genBar').style.width = '100%';
+    generating = false;
+    newGame(diff, puzzles);
+  } catch (e) {
+    console.error(e);
+    generating = false;
+    toast('Üretim sırasında bir hata oluştu, lütfen tekrar deneyin');
+    resumeTimerIfNeeded();
+  } finally {
+    generating = false;
+    hide('#ovGen');
+    updateStatus();
+  }
+}
+
+async function onReveal() {
+  if (!G || generating) return;
+  if (G.answersVisible) {                                // gizle
+    G.answersVisible = false; persist(); refreshAll(); return;
+  }
+  if (!G.completed && !G.revealed) {
+    const ok = await askConfirm('Cevaplar gösterilsin mi?', 'Cevapları getirirseniz bu oyunun süresi durur, giriş yapamazsınız ve sonuç liderlik tablosuna kaydedilmez.', 'Cevapları getir');
+    if (!ok) return;
+    stopTimer(); G.revealed = true; G.elapsed = Math.round(elapsedBase);
+  }
+  G.answersVisible = true;
+  persist(); refreshAll(); updateTimerDisplay();
+}
+
+/* ======================================================================
+   PDF  –  harici kütüphanesiz, vektörel A4 (portre), 2 sütun x 3 satır
+   ====================================================================== */
+const HELV = { '#': 556, 'A': 667, 'B': 667, 'C': 722, 'D': 722, 'E': 667, 'F': 611, ' ': 278 };
+function helvWidth(str, size) {
+  let w = 0;
+  for (const ch of str) w += HELV[ch] || 556;
+  return w * size / 1000;
+}
+function asciiTr(s) {
+  const m = { 'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C' };
+  return String(s).replace(/[ğĞüÜşŞıİöÖçÇ]/g, c => m[c]).replace(/[^\x20-\x7E]/g, '?');
+}
+function pdfEsc(s) { return asciiTr(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)'); }
+const f2 = n => n.toFixed(2);
+
+function buildPdf(game, withAnswers) {
+  const W = 595.28, H = 841.89;                          // A4 portre (pt)
+  const CELL = 24, GRID = CELL * 9;                      // 216 pt
+  const GAP_X = 44, X0 = (W - 2 * GRID - GAP_X) / 2;
+  const TOP = H - 66, ROW_GAP = 18, LABEL_H = 16;
+  const d = new Date();
+  const dateStr = String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+  const diffName = LEVELS[game.difficulty].name;
+  const ops = [];
+  const text = (font, size, x, y, str, rgb) => {
+    ops.push('BT ' + (rgb || '0 0 0') + ' rg /' + font + ' ' + size + ' Tf ' + f2(x) + ' ' + f2(y) + ' Td (' + pdfEsc(str) + ') Tj ET');
+  };
+  // Başlık
+  text('F2', 18, X0, H - 44, 'SUDOKU');
+  const right = 'Seviye: ' + diffName + '   |   Tarih: ' + dateStr;
+  text('F1', 9.5, W - X0 - helvWidth(asciiTr(right), 9.5), H - 43, right, '0.30 0.30 0.30');
+  ops.push('0.6 w 0.55 G ' + f2(X0) + ' ' + f2(H - 52) + ' m ' + f2(W - X0) + ' ' + f2(H - 52) + ' l S');
+
+  for (let n = 0; n < 6; n++) {
+    const col = n % 2, row = (n / 2) | 0;
+    const bd = game.boards[n];
+    const gx = X0 + col * (GRID + GAP_X);
+    const gyTop = TOP - row * (LABEL_H + GRID + ROW_GAP) - LABEL_H;   // ızgaranın üst kenarı
+    // Etiket: numara + seviye (solda), kimlik (sağda)
+    text('F2', 11, gx, gyTop + 5, 'Sudoku ' + (n + 1) + '  -  ' + diffName);
+    const idTxt = '#' + bd.id.slice(0, 8).toUpperCase();
+    text('F1', 7, gx + GRID - helvWidth(idTxt, 7), gyTop + 5.5, idTxt, '0.45 0.45 0.45');
+    // İnce çizgiler
+    ops.push('0.5 w 0.5 G');
+    for (let k = 1; k < 9; k++) {
+      if (k % 3 === 0) continue;
+      ops.push(f2(gx + k * CELL) + ' ' + f2(gyTop) + ' m ' + f2(gx + k * CELL) + ' ' + f2(gyTop - GRID) + ' l S');
+      ops.push(f2(gx) + ' ' + f2(gyTop - k * CELL) + ' m ' + f2(gx + GRID) + ' ' + f2(gyTop - k * CELL) + ' l S');
+    }
+    // 3x3 kutu sınırları (kalın)
+    ops.push('1.6 w 0 G');
+    for (let k = 3; k < 9; k += 3) {
+      ops.push(f2(gx + k * CELL) + ' ' + f2(gyTop) + ' m ' + f2(gx + k * CELL) + ' ' + f2(gyTop - GRID) + ' l S');
+      ops.push(f2(gx) + ' ' + f2(gyTop - k * CELL) + ' m ' + f2(gx + GRID) + ' ' + f2(gyTop - k * CELL) + ' l S');
+    }
+    ops.push('2.2 w 0 G ' + f2(gx) + ' ' + f2(gyTop - GRID) + ' ' + f2(GRID) + ' ' + f2(GRID) + ' re S');
+    // Rakamlar
+    const size = 15;
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+      const i = r * 9 + c, given = bd.puz[i];
+      let v = 0, font = 'F2', rgb = '0 0 0';
+      if (given) { v = given; }
+      else if (withAnswers) { v = bd.sol[i]; font = 'F1'; rgb = '0.85 0.27 0.04'; }
+      if (!v) continue;
+      const x = gx + c * CELL + (CELL - 0.556 * size) / 2;
+      const y = gyTop - (r + 1) * CELL + (CELL - 0.718 * size) / 2;
+      text(font, size, x, y, String(v), rgb);
+    }
+  }
+  const foot = withAnswers ? 'Siyah: verilen rakamlar   |   Turuncu: cevaplar' : 'Her bulmacanin tek bir cozumu vardir.';
+  text('F1', 8, X0, 30, foot, '0.40 0.40 0.40');
+
+  const content = ops.join('\n');
+  const objs = [];
+  objs[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objs[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+  objs[3] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + W + ' ' + H + '] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>';
+  objs[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
+  objs[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+  objs[6] = '<< /Length ' + content.length + ' >>\nstream\n' + content + '\nendstream';
+  objs[7] = '<< /Title (Sudoku - ' + pdfEsc(diffName) + ') /Producer (Sudoku Atolyesi) >>';
+  let pdf = '%PDF-1.4\n%\u00e2\u00e3\u00cf\u00d3\n';
+  const offs = [];
+  for (let k = 1; k <= 7; k++) { offs[k] = pdf.length; pdf += k + ' 0 obj\n' + objs[k] + '\nendobj\n'; }
+  const xref = pdf.length;
+  pdf += 'xref\n0 8\n0000000000 65535 f \n';
+  for (let k = 1; k <= 7; k++) pdf += String(offs[k]).padStart(10, '0') + ' 00000 n \n';
+  pdf += 'trailer\n<< /Size 8 /Root 1 0 R /Info 7 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+  const bytes = new Uint8Array(pdf.length);
+  for (let k = 0; k < pdf.length; k++) bytes[k] = pdf.charCodeAt(k) & 0xFF;   // her karakter 1 bayt
+  return bytes;
+}
+
+function onPdf() {
+  if (!G) { toast('Önce Sudoku oluşturun'); return; }
+  try {
+    const bytes = buildPdf(G, G.answersVisible);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const d = new Date();
+    a.href = url;
+    a.download = 'sudoku-' + G.difficulty + '-' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '.pdf';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
+    toast(G.answersVisible ? 'PDF indirildi (cevaplarla)' : 'PDF indirildi (yalnızca sorular)');
+  } catch (e) {
+    console.error(e);
+    toast('PDF oluşturulamadı');
+  }
+}
+
+/* ======================================================================
+   İSTATİSTİKLER / LİDERLİK TABLOSU
+   ====================================================================== */
+let stFilter = 'all', stSort = 'best', stHighlight = null;
+function openStats(filter, highlight) {
+  if (filter) stFilter = filter;
+  stHighlight = highlight || null;
+  $('#stSort').value = stSort;
+  renderStats();
+  show('#ovStats');
+}
+function fmtDate(iso) {
+  try { return new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }); }
+  catch (e) { return iso; }
+}
+function renderStats() {
+  const tabs = $('#stTabs');
+  tabs.textContent = '';
+  [['all', 'Tümü']].concat(LEVEL_KEYS.map(k => [k, LEVELS[k].name])).forEach(([k, label]) => {
+    const b = el('button', 'tab' + (stFilter === k ? ' on' : ''), label);
+    b.type = 'button';
+    b.onclick = () => { stFilter = k; renderStats(); };
+    tabs.append(b);
+  });
+  const body = $('#stBody');
+  body.textContent = '';
+  const recs = lsLoad(STORE.rec, []);
+  if (!recs.length) {
+    body.append(el('p', 'muted', 'Henüz kayıt yok. 6 Sudoku\'yu tamamlayıp ismin ile kaydettiğinde burada görünecek.'));
+    return;
+  }
+  const best = (a, b) => a.timeMs - b.timeMs || String(a.date).localeCompare(String(b.date));
+  const recent = (a, b) => String(b.date).localeCompare(String(a.date));
+  const makeTable = list => {
+    const wrap = el('div', 'tablewrap'), t = el('table'), thead = el('thead'), hr = el('tr');
+    ['#', 'İsim', 'Süre', 'Seviye', 'Tarih'].forEach(h => hr.append(el('th', '', h)));
+    thead.append(hr); t.append(thead);
+    const tb = el('tbody');
+    list.forEach((r, idx) => {
+      const tr = el('tr', r.gameId === stHighlight ? 'hl' : '');
+      const medal = stSort === 'best' ? ['🥇', '🥈', '🥉'][idx] : '';
+      tr.append(el('td', 'num', medal || String(idx + 1)), el('td', '', r.name), el('td', 'num', fmtTime(r.timeMs)),
+        el('td', '', LEVELS[r.difficulty] ? LEVELS[r.difficulty].name : r.difficulty), el('td', 'num', fmtDate(r.date)));
+      tb.append(tr);
+    });
+    t.append(tb); wrap.append(t);
+    return wrap;
+  };
+  if (stFilter === 'all' && stSort === 'best') {         // seviyeler ayrı ayrı, en iyi 10
+    LEVEL_KEYS.forEach(k => {
+      const list = recs.filter(r => r.difficulty === k).sort(best).slice(0, 10);
+      if (!list.length) return;
+      body.append(el('h3', 'sec', LEVELS[k].name + ' · en iyi süreler'), makeTable(list));
+    });
+  } else {
+    const list = recs.filter(r => stFilter === 'all' || r.difficulty === stFilter).sort(stSort === 'best' ? best : recent).slice(0, 100);
+    if (!list.length) body.append(el('p', 'muted', 'Bu seviye için kayıt yok.'));
+    else body.append(makeTable(list));
+  }
+}
+
+/* ======================================================================
+   OLAY BAĞLAMALARI
+   ====================================================================== */
+function buildNumpad() {
+  const np = $('#numpad');
+  for (let n = 1; n <= 9; n++) {
+    const b = el('button', 'nbtn', String(n));
+    b.type = 'button'; b.dataset.n = n; b.setAttribute('aria-label', 'Rakam ' + n);
+    np.append(b);
+  }
+  const undoB = el('button', 'nbtn act', '↶ Geri al'); undoB.type = 'button'; undoB.dataset.act = 'undo';
+  const delB = el('button', 'nbtn act wide', '⌫ Sil'); delB.type = 'button'; delB.dataset.act = 'del';
+  np.append(undoB, delB);
+  np.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.n) setCell(+b.dataset.n);
+    else if (b.dataset.act === 'del') setCell(0);
+    else if (b.dataset.act === 'undo') undo();
+  });
+}
+
+function init() {
+  $('#difficulty').value = LEVELS[prefs.difficulty] ? prefs.difficulty : 'kolay';
+  $('#chkErrors').checked = !!prefs.errors;
+  buildNumpad();
+
+  $('#btnGenerate').onclick = onGenerate;
+  $('#btnReveal').onclick = onReveal;
+  $('#btnPdf').onclick = onPdf;
+  $('#btnStats').onclick = () => openStats();
+  $('#stClose').onclick = () => hide('#ovStats');
+  $('#stSort').onchange = e => { stSort = e.target.value; renderStats(); };
+  $('#stClear').onclick = async () => {
+    if (!lsLoad(STORE.rec, []).length) { toast('Silinecek kayıt yok'); return; }
+    const ok = await askConfirm('Tüm kayıtlar silinsin mi?', 'Liderlik tablosundaki bütün kayıtlar kalıcı olarak silinecek.', 'Evet, sil');
+    if (ok) { lsSave(STORE.rec, []); renderStats(); toast('Kayıtlar temizlendi'); }
+  };
+  $('#chkErrors').onchange = e => { prefs.errors = e.target.checked; lsSave(STORE.prefs, prefs); if (G) refreshAll(); };
+  $('#dnSave').onclick = saveRecord;
+  $('#dnSkip').onclick = () => { hide('#ovDone'); updateStatus(); };
+  $('#dnName').addEventListener('keydown', e => { if (e.key === 'Enter') saveRecord(); });
+  $('#ovStats').addEventListener('click', e => { if (e.target.id === 'ovStats') hide('#ovStats'); });
+
+  // Hücre seçimi (olay delegasyonu)
+  $('#boards').addEventListener('click', e => {
+    const c = e.target.closest('.cell');
+    if (!c || !G) return;
+    selectCell(+c.dataset.b, +c.dataset.i);
+  });
+
+  // Klavye
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (!$('#ovConfirm').hidden) { $('#cfNo').click(); return; }
+      if (!$('#ovStats').hidden) { hide('#ovStats'); return; }
+      if (!$('#ovDone').hidden) { $('#dnSkip').click(); return; }
+      if (sel) { const b = sel.b; sel = null; refreshBoard(b); }
+      return;
+    }
+    if (modalOpen()) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (/^[1-9]$/.test(e.key)) { if (sel) { e.preventDefault(); setCell(+e.key); } return; }
+    if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') { if (sel) { e.preventDefault(); setCell(0); } return; }
+    const mv = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+    if (mv && G) { e.preventDefault(); moveSel(mv[0], mv[1]); }
+  });
+
+  // Zamanlayıcı sürekliliği
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { stopTimer(); persist(); } else resumeTimerIfNeeded();
+  });
+  window.addEventListener('pagehide', persist);
+  window.addEventListener('beforeunload', persist);
+  setInterval(() => {
+    updateTimerDisplay();
+    if (G && timerRunning && ++saveCounter % 20 === 0) persist();    // ~5 sn'de bir kaydet
+  }, 250);
+
+  // Üst çubuk yüksekliğini sticky durum çubuğu için ayarla
+  const syncTb = () => { document.documentElement.style.setProperty('--tb', $('#topbar').offsetHeight + 'px'); };
+  syncTb(); window.addEventListener('resize', syncTb);
+
+  // Önceki oyunu geri yükle
+  const saved = restoreGame(lsLoad(STORE.game, null));
+  if (saved) {
+    G = saved;
+    elapsedBase = G.completed ? G.finalTime : G.elapsed;
+    timerRunning = false;
+    $('#difficulty').value = G.difficulty;
+    renderBoards();
+    resumeTimerIfNeeded();
+    if (G.completed && !G.recorded && !G.revealed) setTimeout(openComplete, 300);
+  } else {
+    renderBoards();
+  }
+  updateTimerDisplay();
+  updateStatus();
+}
+
+if (typeof document !== 'undefined' && document.getElementById('boards')) init();
+</script>
+</body>
+</html>
